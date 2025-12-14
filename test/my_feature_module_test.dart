@@ -1,7 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:my_feature_module/my_feature_module.dart';
-import 'package:my_feature_module/my_feature_module_platform_interface.dart';
-import 'package:my_feature_module/my_feature_module_method_channel.dart';
 import 'package:plugin_platform_interface/plugin_platform_interface.dart';
 
 class MockMyFeatureModulePlatform
