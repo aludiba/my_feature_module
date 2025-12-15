@@ -1,3 +1,4 @@
+import 'dart:developer' as developer;
 import 'dart:io';
 
 import 'package:flutter/material.dart';
@@ -47,6 +48,7 @@ class _SmzPageState extends State<SmzPage> {
       MaterialPageRoute(
         builder: (context) => CameraPage(
           type: type,
+          httpService: _httpService,
           onPhotoTaken: (imagePath, recognitionResult) {
             RecognitionResult? recognition;
             if (recognitionResult != null) {
@@ -111,19 +113,37 @@ class _SmzPageState extends State<SmzPage> {
   /// 提交
   Future<void> _submit() async {
     if (!_canSubmit) {
+      developer.log(
+        '提交失败：至少需要一张图片',
+        name: 'SmzPage',
+      );
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('请至少上传一张图片')),
       );
       return;
     }
 
+    developer.log(
+      '开始提交问诊照片',
+      name: 'SmzPage',
+      error: {
+        'tongueSurfacePath': _tongueSurface.imagePath,
+        'sublingualVeinsPath': _sublingualVeins.imagePath,
+        'facePath': _face.imagePath,
+      },
+    );
+
     try {
-      // TODO: 实现上传问诊照片的接口调用
-      // await _httpService.uploadDiagnosisImages(
-      //   tongueSurfacePath: _tongueSurface.imagePath,
-      //   sublingualVeinsPath: _sublingualVeins.imagePath,
-      //   facePath: _face.imagePath,
-      // );
+      await _httpService.uploadDiagnosisImages(
+        tongueSurfacePath: _tongueSurface.imagePath,
+        sublingualVeinsPath: _sublingualVeins.imagePath,
+        facePath: _face.imagePath,
+      );
+
+      developer.log(
+        '提交成功',
+        name: 'SmzPage',
+      );
 
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -131,7 +151,13 @@ class _SmzPageState extends State<SmzPage> {
         );
         Navigator.of(context).pop();
       }
-    } catch (e) {
+    } catch (e, stackTrace) {
+      developer.log(
+        '提交失败',
+        name: 'SmzPage',
+        error: e,
+        stackTrace: stackTrace,
+      );
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text('上传失败: $e')),

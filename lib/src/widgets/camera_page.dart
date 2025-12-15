@@ -1,9 +1,12 @@
+import 'dart:developer' as developer;
 import 'dart:io';
 import 'dart:typed_data';
 import 'package:camera/camera.dart';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:image/image.dart' as img;
+import 'package:my_feature_module/src/models/recognition_result.dart';
+import 'package:my_feature_module/src/services/http_service.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:path/path.dart' as path;
 
@@ -18,11 +21,23 @@ enum CameraType {
 class CameraPage extends StatefulWidget {
   final CameraType type;
   final Function(String imagePath, Map<String, dynamic>? recognitionResult)? onPhotoTaken;
+  final HttpService? httpService;
+  final String? appId;
+  final String? appSecret;
+  final String? authCode;
+  final String? tongueApiBaseUrl;
+  final String? businessType;
 
   const CameraPage({
     super.key,
     required this.type,
     this.onPhotoTaken,
+    this.httpService,
+    this.appId,
+    this.appSecret,
+    this.authCode,
+    this.tongueApiBaseUrl,
+    this.businessType,
   });
 
   @override
@@ -128,12 +143,24 @@ class _CameraPageState extends State<CameraPage> {
 
   Future<void> _pickImageFromGallery() async {
     try {
+      developer.log(
+        '从相册选择图片',
+        name: 'CameraPage',
+        error: {'type': widget.type.toString()},
+      );
+
       final XFile? image = await _imagePicker.pickImage(
         source: ImageSource.gallery,
         imageQuality: 85,
       );
 
       if (image != null) {
+        developer.log(
+          '图片选择成功',
+          name: 'CameraPage',
+          error: {'imagePath': image.path},
+        );
+
         // 从相册选择的图片不进行裁剪，原样保存
         final Directory tempDir = await getTemporaryDirectory();
         final String fileName = '${DateTime.now().millisecondsSinceEpoch}.jpg';
@@ -141,14 +168,34 @@ class _CameraPageState extends State<CameraPage> {
         final File imageFile = File(image.path);
         await imageFile.copy(filePath);
 
+        developer.log(
+          '图片保存完成',
+          name: 'CameraPage',
+          error: {'filePath': filePath},
+        );
+
         setState(() {
           _capturedImage = XFile(filePath);
         });
 
-        // 模拟识别结果（实际应该调用识别接口）
+        developer.log(
+          '开始识别',
+          name: 'CameraPage',
+        );
         await _simulateRecognition();
+      } else {
+        developer.log(
+          '用户取消选择图片',
+          name: 'CameraPage',
+        );
       }
-    } catch (e) {
+    } catch (e, stackTrace) {
+      developer.log(
+        '选择照片失败',
+        name: 'CameraPage',
+        error: e,
+        stackTrace: stackTrace,
+      );
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text('选择照片失败: $e')),
@@ -166,23 +213,52 @@ class _CameraPageState extends State<CameraPage> {
   Future<void> _takePicture() async {
     if (!_isInitialized || _controller == null || _isCapturing) return;
 
+    developer.log(
+      '开始拍照',
+      name: 'CameraPage',
+      error: {'type': widget.type.toString()},
+    );
+
     setState(() {
       _isCapturing = true;
     });
 
     try {
       final XFile image = await _controller!.takePicture();
+      developer.log(
+        '拍照成功',
+        name: 'CameraPage',
+        error: {'imagePath': image.path},
+      );
       
       // 裁剪图片，只保留引导框内的部分
+      developer.log(
+        '开始裁剪图片',
+        name: 'CameraPage',
+      );
       final String croppedImagePath = await _cropImageToGuideBox(image.path);
+      developer.log(
+        '图片裁剪完成',
+        name: 'CameraPage',
+        error: {'croppedImagePath': croppedImagePath},
+      );
       
       setState(() {
         _capturedImage = XFile(croppedImagePath);
       });
 
-      // 模拟识别结果（实际应该调用识别接口）
+      developer.log(
+        '开始识别',
+        name: 'CameraPage',
+      );
       await _simulateRecognition();
-    } catch (e) {
+    } catch (e, stackTrace) {
+      developer.log(
+        '拍照失败',
+        name: 'CameraPage',
+        error: e,
+        stackTrace: stackTrace,
+      );
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text('拍照失败: $e')),
@@ -200,11 +276,21 @@ class _CameraPageState extends State<CameraPage> {
   /// 裁剪图片到引导框区域
   Future<String> _cropImageToGuideBox(String imagePath) async {
     try {
+      developer.log(
+        '开始裁剪图片',
+        name: 'CameraPage',
+        error: {'imagePath': imagePath},
+      );
+
       // 读取原始图片
       final Uint8List imageBytes = await File(imagePath).readAsBytes();
       img.Image? originalImage = img.decodeImage(imageBytes);
       
       if (originalImage == null) {
+        developer.log(
+          '裁剪失败：无法解码图片',
+          name: 'CameraPage',
+        );
         throw Exception('无法解码图片');
       }
 
@@ -212,6 +298,15 @@ class _CameraPageState extends State<CameraPage> {
       final Size previewSize = _controller!.value.previewSize ?? Size.zero;
       final int imageWidth = originalImage.width;
       final int imageHeight = originalImage.height;
+
+      developer.log(
+        '图片尺寸信息',
+        name: 'CameraPage',
+        error: {
+          'previewSize': '${previewSize.width}x${previewSize.height}',
+          'imageSize': '${imageWidth}x${imageHeight}',
+        },
+      );
 
       // 计算引导框在屏幕上的位置和大小
       final Rect guideRect = _getGuideBoxRect(previewSize);
@@ -233,6 +328,16 @@ class _CameraPageState extends State<CameraPage> {
       final int safeWidth = (cropX + cropWidth).clamp(0, imageWidth) - safeX;
       final int safeHeight = (cropY + cropHeight).clamp(0, imageHeight) - safeY;
 
+      developer.log(
+        '裁剪参数',
+        name: 'CameraPage',
+        error: {
+          'guideRect': '${guideRect.left},${guideRect.top},${guideRect.width},${guideRect.height}',
+          'scale': scale,
+          'cropRect': '$safeX,$safeY,$safeWidth,$safeHeight',
+        },
+      );
+
       // 裁剪图片
       final img.Image croppedImage = img.copyCrop(
         originalImage,
@@ -249,8 +354,24 @@ class _CameraPageState extends State<CameraPage> {
       final File croppedFile = File(filePath);
       await croppedFile.writeAsBytes(img.encodeJpg(croppedImage, quality: 90));
 
+      developer.log(
+        '图片裁剪完成',
+        name: 'CameraPage',
+        error: {
+          'originalSize': '${imageWidth}x${imageHeight}',
+          'croppedSize': '${safeWidth}x${safeHeight}',
+          'filePath': filePath,
+        },
+      );
+
       return filePath;
-    } catch (e) {
+    } catch (e, stackTrace) {
+      developer.log(
+        '图片裁剪失败，返回原图',
+        name: 'CameraPage',
+        error: e,
+        stackTrace: stackTrace,
+      );
       // 如果裁剪失败，返回原图片路径
       return imagePath;
     }
@@ -383,55 +504,161 @@ class _CameraPageState extends State<CameraPage> {
   }
 
   Future<void> _simulateRecognition() async {
-    // TODO: 调用实际的识别接口
-    await Future.delayed(const Duration(seconds: 1));
-    
-    // 模拟识别结果（随机成功/失败，用于测试）
-    final random = DateTime.now().millisecond % 3;
-    
-    if (random == 0) {
-      // 模拟识别失败
-      switch (widget.type) {
-        case CameraType.tongueSurface:
-          _recognitionResult = {
-            'success': false,
-            'errorMessage': '未检测到图片中舌部区域',
-          };
-          break;
-        case CameraType.sublingualVeins:
-          _recognitionResult = {
-            'success': false,
-            'errorMessage': '舌下络脉目标检测失败',
-          };
-          break;
-        case CameraType.face:
-          _recognitionResult = {
-            'success': false,
-            'errorMessage': '未检测到图片中面部区域',
-          };
-          break;
+    final hasConfig = widget.httpService != null &&
+        widget.appId != null &&
+        widget.appSecret != null &&
+        widget.authCode != null &&
+        widget.tongueApiBaseUrl != null;
+
+    developer.log(
+      '开始识别',
+      name: 'CameraPage',
+      error: {
+        'type': widget.type.toString(),
+        'hasConfig': hasConfig,
+        'imagePath': _capturedImage?.path,
+      },
+    );
+
+    if (hasConfig) {
+      try {
+        RecognitionResult result;
+        switch (widget.type) {
+          case CameraType.tongueSurface:
+            developer.log(
+              '调用舌面识别接口',
+              name: 'CameraPage',
+            );
+            result = await widget.httpService!.recognizeTongueSurface(
+              _capturedImage!.path,
+              appId: widget.appId!,
+              appSecret: widget.appSecret!,
+              authCode: widget.authCode!,
+              tongueApiBaseUrl: widget.tongueApiBaseUrl!,
+              businessType: widget.businessType,
+            );
+            break;
+          case CameraType.sublingualVeins:
+            developer.log(
+              '调用舌下脉络识别接口',
+              name: 'CameraPage',
+            );
+            result = await widget.httpService!.recognizeSublingualVeins(
+              _capturedImage!.path,
+              appId: widget.appId!,
+              appSecret: widget.appSecret!,
+              authCode: widget.authCode!,
+              tongueApiBaseUrl: widget.tongueApiBaseUrl!,
+              businessType: widget.businessType,
+            );
+            break;
+          case CameraType.face:
+            developer.log(
+              '调用面部识别接口',
+              name: 'CameraPage',
+            );
+            result = await widget.httpService!.recognizeFace(
+              _capturedImage!.path,
+              appId: widget.appId!,
+              appSecret: widget.appSecret!,
+              authCode: widget.authCode!,
+              tongueApiBaseUrl: widget.tongueApiBaseUrl!,
+              businessType: widget.businessType,
+            );
+            break;
+        }
+
+        developer.log(
+          '识别完成',
+          name: 'CameraPage',
+          error: {
+            'success': result.success,
+            'results': result.results,
+            'errorMessage': result.errorMessage,
+          },
+        );
+
+        _recognitionResult = {
+          'success': result.success,
+          if (result.success)
+            'results': result.results
+          else
+            'errorMessage': result.errorMessage ?? '识别失败',
+        };
+      } catch (e, stackTrace) {
+        developer.log(
+          '识别异常',
+          name: 'CameraPage',
+          error: e,
+          stackTrace: stackTrace,
+        );
+        String errorMessage = '识别失败';
+        switch (widget.type) {
+          case CameraType.tongueSurface:
+            errorMessage = '未检测到图片中舌部区域';
+            break;
+          case CameraType.sublingualVeins:
+            errorMessage = '舌下络脉目标检测失败';
+            break;
+          case CameraType.face:
+            errorMessage = '未检测到图片中面部区域';
+            break;
+        }
+        _recognitionResult = {
+          'success': false,
+          'errorMessage': errorMessage,
+        };
       }
     } else {
-      // 模拟识别成功
-      switch (widget.type) {
-        case CameraType.tongueSurface:
-          _recognitionResult = {
-            'success': true,
-            'results': ['舌色红', '舌苔黄'],
-          };
-          break;
-        case CameraType.sublingualVeins:
-          _recognitionResult = {
-            'success': true,
-            'results': ['未识别出异常'],
-          };
-          break;
-        case CameraType.face:
-          _recognitionResult = {
-            'success': true,
-            'results': ['面色黄', '唇紫'],
-          };
-          break;
+      developer.log(
+        '使用模拟识别（未配置接口参数）',
+        name: 'CameraPage',
+      );
+      await Future.delayed(const Duration(seconds: 1));
+      final random = DateTime.now().millisecond % 3;
+      
+      if (random == 0) {
+        switch (widget.type) {
+          case CameraType.tongueSurface:
+            _recognitionResult = {
+              'success': false,
+              'errorMessage': '未检测到图片中舌部区域',
+            };
+            break;
+          case CameraType.sublingualVeins:
+            _recognitionResult = {
+              'success': false,
+              'errorMessage': '舌下络脉目标检测失败',
+            };
+            break;
+          case CameraType.face:
+            _recognitionResult = {
+              'success': false,
+              'errorMessage': '未检测到图片中面部区域',
+            };
+            break;
+        }
+      } else {
+        switch (widget.type) {
+          case CameraType.tongueSurface:
+            _recognitionResult = {
+              'success': true,
+              'results': ['舌色红', '舌苔黄'],
+            };
+            break;
+          case CameraType.sublingualVeins:
+            _recognitionResult = {
+              'success': true,
+              'results': ['未识别出异常'],
+            };
+            break;
+          case CameraType.face:
+            _recognitionResult = {
+              'success': true,
+              'results': ['面色黄', '唇紫'],
+            };
+            break;
+        }
       }
     }
     
@@ -442,6 +669,15 @@ class _CameraPageState extends State<CameraPage> {
 
   void _confirmPhoto() {
     if (_capturedImage != null && widget.onPhotoTaken != null) {
+      developer.log(
+        '确认照片',
+        name: 'CameraPage',
+        error: {
+          'imagePath': _capturedImage!.path,
+          'hasRecognitionResult': _recognitionResult != null,
+          'recognitionSuccess': _recognitionResult?['success'],
+        },
+      );
       widget.onPhotoTaken!(_capturedImage!.path, _recognitionResult);
       Navigator.of(context).pop();
     }
