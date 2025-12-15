@@ -22,11 +22,37 @@ class _SmzPageState extends State<SmzPage> {
   ImageData _sublingualVeins = ImageData();
   ImageData _face = ImageData();
 
+  // 舌面诊接口配置
+  static const String _appId = '58928655-2a2b-4177-a81e-88ce7e272485';
+  static const String _appSecret = '7a3d4f1a-a8ad-494e-9f72-bbcec7ae230f';
+  static const String _authCode = '4e06c40b3b61432d9889b041ea27dab9';
+  // 识别接口的 baseUrl
+  static const String _tongueApiBaseUrl = 'https://devapi.macrocura.com';
+  // 上传接口的 baseUrl（根据小程序配置：TARO_APP_API="https://devapi.lightcura.com"）
+  static const String _uploadApiBaseUrl = 'https://devapi.lightcura.com';
+  static const String _businessType = 'mini_tongue';
+
   @override
   void initState() {
     super.initState();
     // 初始化 HTTP 服务
-    _httpService.init();
+    // 注意：上传接口可能在不同的服务器上，需要单独配置 baseUrl
+    // 如果上传接口和识别接口在同一服务器，则使用相同的 baseUrl
+    _httpService.init(
+      baseUrl: _uploadApiBaseUrl, // 使用上传接口的 baseUrl
+    );
+    
+    developer.log(
+      'SmzPage 初始化完成',
+      name: 'SmzPage',
+      error: {
+        'hasHttpService': true,
+        'appId': _appId,
+        'tongueApiBaseUrl': _tongueApiBaseUrl,
+        'uploadApiBaseUrl': _uploadApiBaseUrl,
+        'businessType': _businessType,
+      },
+    );
   }
 
   @override
@@ -49,6 +75,11 @@ class _SmzPageState extends State<SmzPage> {
         builder: (context) => CameraPage(
           type: type,
           httpService: _httpService,
+          appId: _appId,
+          appSecret: _appSecret,
+          authCode: _authCode,
+          tongueApiBaseUrl: _tongueApiBaseUrl,
+          businessType: _businessType,
           onPhotoTaken: (imagePath, recognitionResult) {
             RecognitionResult? recognition;
             if (recognitionResult != null) {
