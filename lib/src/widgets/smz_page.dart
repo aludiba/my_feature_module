@@ -96,13 +96,13 @@ class _SmzPageState extends State<SmzPage> {
     setState(() {
       switch (type) {
         case 'tongueSurface':
-          _tongueSurface = ImageData();
+          _tongueSurface = ImageData(showExample: true);
           break;
         case 'sublingualVeins':
-          _sublingualVeins = ImageData();
+          _sublingualVeins = ImageData(showExample: true);
           break;
         case 'face':
-          _face = ImageData();
+          _face = ImageData(showExample: true);
           break;
       }
     });
@@ -142,56 +142,64 @@ class _SmzPageState extends State<SmzPage> {
 
   @override
   Widget build(BuildContext context) {
+    final bool isLandscape = MediaQuery.of(context).size.width > MediaQuery.of(context).size.height;
+    final double maxWidth = isLandscape ? 800 : double.infinity;
+    
     return Scaffold(
       appBar: AppBar(
         title: const Text('舌面诊'),
         backgroundColor: Colors.white,
         elevation: 0,
       ),
-      body: Column(
-        children: [
-          // 头部区域
-          // _buildHeader(),
-          // 主要内容区域
-          Expanded(
-            child: SingleChildScrollView(
-              controller: _controller,
-              padding: const EdgeInsets.all(16),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  // 舌部部分
-                  _buildSectionTitle('舌部'),
-                  const SizedBox(height: 16),
-                  _buildImageUploadRow(
-                    '舌面',
-                    _tongueSurface,
-                    () => _navigateToCamera(CameraType.tongueSurface),
-                    () => _deleteImage('tongueSurface'),
+      body: Center(
+        child: ConstrainedBox(
+          constraints: BoxConstraints(maxWidth: maxWidth),
+          child: Column(
+            children: [
+              // 头部区域
+              // _buildHeader(),
+              // 主要内容区域
+              Expanded(
+                child: SingleChildScrollView(
+                  controller: _controller,
+                  padding: const EdgeInsets.all(16),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      // 舌部部分
+                      _buildSectionTitle('舌部'),
+                      const SizedBox(height: 16),
+                      _buildImageUploadRow(
+                        '舌面',
+                        _tongueSurface,
+                        () => _navigateToCamera(CameraType.tongueSurface),
+                        () => _deleteImage('tongueSurface'),
+                      ),
+                      const SizedBox(height: 16),
+                      _buildImageUploadRow(
+                        '舌下脉络',
+                        _sublingualVeins,
+                        () => _navigateToCamera(CameraType.sublingualVeins),
+                        () => _deleteImage('sublingualVeins'),
+                      ),
+                      const SizedBox(height: 32),
+                      // 面部部分
+                      _buildSectionTitle('面部'),
+                      const SizedBox(height: 16),
+                      _buildImageUploadRow(
+                        '正面',
+                        _face,
+                        () => _navigateToCamera(CameraType.face),
+                        () => _deleteImage('face'),
+                      ),
+                      const SizedBox(height: 100), // 为底部按钮留出空间
+                    ],
                   ),
-                  const SizedBox(height: 16),
-                  _buildImageUploadRow(
-                    '舌下脉络',
-                    _sublingualVeins,
-                    () => _navigateToCamera(CameraType.sublingualVeins),
-                    () => _deleteImage('sublingualVeins'),
-                  ),
-                  const SizedBox(height: 32),
-                  // 面部部分
-                  _buildSectionTitle('面部'),
-                  const SizedBox(height: 16),
-                  _buildImageUploadRow(
-                    '正面',
-                    _face,
-                    () => _navigateToCamera(CameraType.face),
-                    () => _deleteImage('face'),
-                  ),
-                  const SizedBox(height: 100), // 为底部按钮留出空间
-                ],
+                ),
               ),
-            ),
+            ],
           ),
-        ],
+        ),
       ),
       bottomNavigationBar: _buildBottomButton(),
     );
@@ -286,7 +294,7 @@ class _SmzPageState extends State<SmzPage> {
         Expanded(
           flex: 2,
           child: GestureDetector(
-            onTap: onTap,
+            onTap: imageData.hasImage && !imageData.showExample ? null : onTap,
             child: Container(
               height: 120,
               decoration: BoxDecoration(
@@ -309,40 +317,6 @@ class _SmzPageState extends State<SmzPage> {
                             fit: BoxFit.cover,
                           ),
                         ),
-                        // 识别结果标签
-                        if (imageData.recognitionResult != null &&
-                            imageData.recognitionResult!.success)
-                          Positioned(
-                            top: 4,
-                            left: 4,
-                            right: 4,
-                            child: Container(
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 8,
-                                vertical: 4,
-                              ),
-                              decoration: BoxDecoration(
-                                color: Colors.black54,
-                                borderRadius: BorderRadius.circular(4),
-                              ),
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                mainAxisSize: MainAxisSize.min,
-                                children: imageData.recognitionResult!.results
-                                    .take(2)
-                                    .map((result) => Text(
-                                          result,
-                                          style: const TextStyle(
-                                            color: Colors.white,
-                                            fontSize: 10,
-                                          ),
-                                          maxLines: 1,
-                                          overflow: TextOverflow.ellipsis,
-                                        ))
-                                    .toList(),
-                              ),
-                            ),
-                          ),
                         // 删除按钮
                         Positioned(
                           top: 4,
@@ -375,7 +349,7 @@ class _SmzPageState extends State<SmzPage> {
                         ),
                         const SizedBox(height: 8),
                         Text(
-                          '+ $label',
+                          label,
                           style: TextStyle(
                             fontSize: 14,
                             color: Colors.grey[600],
@@ -387,11 +361,11 @@ class _SmzPageState extends State<SmzPage> {
           ),
         ),
         const SizedBox(width: 16),
-        // 右侧示例图片（如果有图片则不显示）
+        // 右侧：识别结果或示例图片
         Expanded(
           flex: 2,
           child: imageData.hasImage && !imageData.showExample
-              ? const SizedBox()
+              ? _buildRecognitionResultOrExample(imageData, label)
               : Container(
                   height: 120,
                   decoration: BoxDecoration(
@@ -421,6 +395,101 @@ class _SmzPageState extends State<SmzPage> {
                 ),
         ),
       ],
+    );
+  }
+
+  // 构建识别结果或示例图
+  Widget _buildRecognitionResultOrExample(ImageData imageData, String label) {
+    // 如果有识别结果且成功，显示识别结果标签
+    if (imageData.recognitionResult != null &&
+        imageData.recognitionResult!.success &&
+        imageData.recognitionResult!.results.isNotEmpty) {
+      return Container(
+        height: 120,
+        padding: const EdgeInsets.all(8),
+        decoration: BoxDecoration(
+          color: Colors.grey[100],
+          borderRadius: BorderRadius.circular(8),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Wrap(
+              spacing: 6,
+              runSpacing: 6,
+              children: imageData.recognitionResult!.results
+                  .map((result) => Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 8,
+                          vertical: 4,
+                        ),
+                        decoration: BoxDecoration(
+                          color: Colors.grey[300],
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        child: Text(
+                          result,
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: Colors.grey[800],
+                          ),
+                        ),
+                      ))
+                  .toList(),
+            ),
+          ],
+        ),
+      );
+    }
+    // 如果识别失败或没有识别结果，显示"未识别出异常"或示例图
+    if (imageData.recognitionResult != null &&
+        imageData.recognitionResult!.success &&
+        imageData.recognitionResult!.results.isEmpty) {
+      return Container(
+        height: 120,
+        decoration: BoxDecoration(
+          color: Colors.grey[100],
+          borderRadius: BorderRadius.circular(8),
+        ),
+        child: Center(
+          child: Text(
+            '未识别出异常',
+            style: TextStyle(
+              fontSize: 12,
+              color: Colors.grey[600],
+            ),
+          ),
+        ),
+      );
+    }
+    // 默认显示示例图
+    return Container(
+      height: 120,
+      decoration: BoxDecoration(
+        color: Colors.grey[100],
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Icon(
+            label == '舌面' || label == '舌下脉络'
+                ? Icons.face
+                : Icons.person,
+            size: 50,
+            color: Colors.grey[400],
+          ),
+          const SizedBox(height: 8),
+          const Text(
+            '示例',
+            style: TextStyle(
+              fontSize: 12,
+              color: Colors.grey,
+            ),
+          ),
+        ],
+      ),
     );
   }
 

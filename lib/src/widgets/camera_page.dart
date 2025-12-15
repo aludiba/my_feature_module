@@ -1,6 +1,9 @@
 import 'dart:io';
+import 'dart:typed_data';
 import 'package:camera/camera.dart';
 import 'package:flutter/material.dart';
+import 'package:image_picker/image_picker.dart';
+import 'package:image/image.dart' as img;
 import 'package:path_provider/path_provider.dart';
 import 'package:path/path.dart' as path;
 
@@ -29,10 +32,12 @@ class CameraPage extends StatefulWidget {
 class _CameraPageState extends State<CameraPage> {
   CameraController? _controller;
   List<CameraDescription>? _cameras;
+  int _currentCameraIndex = 0;
   bool _isInitialized = false;
   bool _isCapturing = false;
   XFile? _capturedImage;
   Map<String, dynamic>? _recognitionResult;
+  final ImagePicker _imagePicker = ImagePicker();
 
   @override
   void initState() {
@@ -53,9 +58,41 @@ class _CameraPageState extends State<CameraPage> {
         return;
       }
 
-      // 使用后置摄像头
+      // 默认使用前置摄像头
+      _currentCameraIndex = _cameras!.indexWhere(
+        (camera) => camera.lensDirection == CameraLensDirection.front,
+      );
+      // 如果找不到前置摄像头，使用第一个摄像头
+      if (_currentCameraIndex == -1) {
+        _currentCameraIndex = 0;
+      }
+
+      await _switchCamera(_currentCameraIndex);
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('相机初始化失败: $e')),
+        );
+        Navigator.of(context).pop();
+      }
+    }
+  }
+
+  Future<void> _switchCamera(int cameraIndex) async {
+    if (_cameras == null || cameraIndex < 0 || cameraIndex >= _cameras!.length) {
+      return;
+    }
+
+    // 先释放旧的控制器
+    await _controller?.dispose();
+
+    setState(() {
+      _isInitialized = false;
+    });
+
+    try {
       _controller = CameraController(
-        _cameras![0],
+        _cameras![cameraIndex],
         ResolutionPreset.high,
         enableAudio: false,
       );
@@ -63,15 +100,59 @@ class _CameraPageState extends State<CameraPage> {
       await _controller!.initialize();
       if (mounted) {
         setState(() {
+          _currentCameraIndex = cameraIndex;
           _isInitialized = true;
         });
       }
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('相机初始化失败: $e')),
+          SnackBar(content: Text('切换摄像头失败: $e')),
         );
-        Navigator.of(context).pop();
+      }
+    }
+  }
+
+  Future<void> _toggleCamera() async {
+    if (_cameras == null || _cameras!.length < 2) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('设备只有一个摄像头')),
+      );
+      return;
+    }
+
+    // 切换到另一个摄像头
+    int nextIndex = (_currentCameraIndex + 1) % _cameras!.length;
+    await _switchCamera(nextIndex);
+  }
+
+  Future<void> _pickImageFromGallery() async {
+    try {
+      final XFile? image = await _imagePicker.pickImage(
+        source: ImageSource.gallery,
+        imageQuality: 85,
+      );
+
+      if (image != null) {
+        // 从相册选择的图片不进行裁剪，原样保存
+        final Directory tempDir = await getTemporaryDirectory();
+        final String fileName = '${DateTime.now().millisecondsSinceEpoch}.jpg';
+        final String filePath = path.join(tempDir.path, fileName);
+        final File imageFile = File(image.path);
+        await imageFile.copy(filePath);
+
+        setState(() {
+          _capturedImage = XFile(filePath);
+        });
+
+        // 模拟识别结果（实际应该调用识别接口）
+        await _simulateRecognition();
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('选择照片失败: $e')),
+        );
       }
     }
   }
@@ -92,15 +173,11 @@ class _CameraPageState extends State<CameraPage> {
     try {
       final XFile image = await _controller!.takePicture();
       
-      // 保存到临时目录
-      final Directory tempDir = await getTemporaryDirectory();
-      final String fileName = '${DateTime.now().millisecondsSinceEpoch}.jpg';
-      final String filePath = path.join(tempDir.path, fileName);
-      final File imageFile = File(image.path);
-      await imageFile.copy(filePath);
-
+      // 裁剪图片，只保留引导框内的部分
+      final String croppedImagePath = await _cropImageToGuideBox(image.path);
+      
       setState(() {
-        _capturedImage = XFile(filePath);
+        _capturedImage = XFile(croppedImagePath);
       });
 
       // 模拟识别结果（实际应该调用识别接口）
@@ -120,6 +197,191 @@ class _CameraPageState extends State<CameraPage> {
     }
   }
 
+  /// 裁剪图片到引导框区域
+  Future<String> _cropImageToGuideBox(String imagePath) async {
+    try {
+      // 读取原始图片
+      final Uint8List imageBytes = await File(imagePath).readAsBytes();
+      img.Image? originalImage = img.decodeImage(imageBytes);
+      
+      if (originalImage == null) {
+        throw Exception('无法解码图片');
+      }
+
+      // 获取相机预览尺寸和实际图片尺寸
+      final Size previewSize = _controller!.value.previewSize ?? Size.zero;
+      final int imageWidth = originalImage.width;
+      final int imageHeight = originalImage.height;
+
+      // 计算引导框在屏幕上的位置和大小
+      final Rect guideRect = _getGuideBoxRect(previewSize);
+
+      // 将屏幕坐标转换为图片坐标
+      final double scaleX = imageWidth / previewSize.width;
+      final double scaleY = imageHeight / previewSize.height;
+      
+      // 计算裁剪区域（使用较小的缩放比例以确保不超出图片范围）
+      final double scale = scaleX < scaleY ? scaleX : scaleY;
+      final int cropX = ((guideRect.left) * scale).round();
+      final int cropY = ((guideRect.top) * scale).round();
+      final int cropWidth = (guideRect.width * scale).round();
+      final int cropHeight = (guideRect.height * scale).round();
+
+      // 确保裁剪区域在图片范围内
+      final int safeX = cropX.clamp(0, imageWidth);
+      final int safeY = cropY.clamp(0, imageHeight);
+      final int safeWidth = (cropX + cropWidth).clamp(0, imageWidth) - safeX;
+      final int safeHeight = (cropY + cropHeight).clamp(0, imageHeight) - safeY;
+
+      // 裁剪图片
+      final img.Image croppedImage = img.copyCrop(
+        originalImage,
+        x: safeX,
+        y: safeY,
+        width: safeWidth,
+        height: safeHeight,
+      );
+
+      // 保存裁剪后的图片
+      final Directory tempDir = await getTemporaryDirectory();
+      final String fileName = '${DateTime.now().millisecondsSinceEpoch}_cropped.jpg';
+      final String filePath = path.join(tempDir.path, fileName);
+      final File croppedFile = File(filePath);
+      await croppedFile.writeAsBytes(img.encodeJpg(croppedImage, quality: 90));
+
+      return filePath;
+    } catch (e) {
+      // 如果裁剪失败，返回原图片路径
+      return imagePath;
+    }
+  }
+
+  /// 从相册选择图片后裁剪
+  Future<String> _cropImageFromGallery(String imagePath, Size previewSize) async {
+    try {
+      // 读取原始图片
+      final Uint8List imageBytes = await File(imagePath).readAsBytes();
+      img.Image? originalImage = img.decodeImage(imageBytes);
+      
+      if (originalImage == null) {
+        throw Exception('无法解码图片');
+      }
+
+      // 获取实际图片尺寸
+      final int imageWidth = originalImage.width;
+      final int imageHeight = originalImage.height;
+
+      // 计算引导框在屏幕上的位置和大小
+      final Rect guideRect = _getGuideBoxRect(previewSize);
+
+      // 将屏幕坐标转换为图片坐标
+      // 对于相册图片，我们需要根据图片的实际尺寸和预览尺寸的比例来计算
+      final double scaleX = imageWidth / previewSize.width;
+      final double scaleY = imageHeight / previewSize.height;
+      
+      // 使用较小的缩放比例以确保不超出图片范围
+      final double scale = scaleX < scaleY ? scaleX : scaleY;
+      final int cropX = ((guideRect.left) * scale).round();
+      final int cropY = ((guideRect.top) * scale).round();
+      final int cropWidth = (guideRect.width * scale).round();
+      final int cropHeight = (guideRect.height * scale).round();
+
+      // 确保裁剪区域在图片范围内
+      final int safeX = cropX.clamp(0, imageWidth);
+      final int safeY = cropY.clamp(0, imageHeight);
+      final int safeWidth = (cropX + cropWidth).clamp(0, imageWidth) - safeX;
+      final int safeHeight = (cropY + cropHeight).clamp(0, imageHeight) - safeY;
+
+      // 裁剪图片
+      final img.Image croppedImage = img.copyCrop(
+        originalImage,
+        x: safeX,
+        y: safeY,
+        width: safeWidth,
+        height: safeHeight,
+      );
+
+      // 保存裁剪后的图片
+      final Directory tempDir = await getTemporaryDirectory();
+      final String fileName = '${DateTime.now().millisecondsSinceEpoch}_cropped.jpg';
+      final String filePath = path.join(tempDir.path, fileName);
+      final File croppedFile = File(filePath);
+      await croppedFile.writeAsBytes(img.encodeJpg(croppedImage, quality: 90));
+
+      return filePath;
+    } catch (e) {
+      // 如果裁剪失败，返回原图片路径
+      return imagePath;
+    }
+  }
+
+  /// 获取引导框在屏幕上的矩形区域
+  Rect _getGuideBoxRect(Size screenSize) {
+    final double centerX = screenSize.width / 2;
+    final double centerY = screenSize.height / 2;
+    
+    // 判断是否为横屏/平板（宽高比大于1）
+    final bool isLandscape = screenSize.width > screenSize.height;
+    final double aspectRatio = screenSize.width / screenSize.height;
+
+    switch (widget.type) {
+      case CameraType.tongueSurface:
+        // 舌面：嘴巴外轮廓 + 舌头轮廓的边界框
+        double width, height;
+        if (isLandscape) {
+          // 横屏时，使用高度作为基准
+          height = screenSize.height * 0.4;
+          width = height * 0.8; // 保持比例
+        } else {
+          width = screenSize.width * 0.6;
+          height = screenSize.height * 0.35;
+        }
+        final double mouthHeight = height * 0.6;
+        final double tongueHeight = height * 0.8;
+        final double tongueBottom = centerY + tongueHeight * 0.5;
+        final double top = centerY - height * 0.1;
+        final double bottom = tongueBottom;
+        return Rect.fromLTWH(
+          centerX - width / 2,
+          top,
+          width,
+          bottom - top,
+        );
+      case CameraType.sublingualVeins:
+        // 舌下脉络：嘴巴外轮廓的边界框
+        double width, height;
+        if (isLandscape) {
+          height = screenSize.height * 0.3;
+          width = height * 0.7;
+        } else {
+          width = screenSize.width * 0.5;
+          height = screenSize.height * 0.25;
+        }
+        final double mouthHeight = height * 0.7;
+        return Rect.fromCenter(
+          center: Offset(centerX, centerY),
+          width: width,
+          height: mouthHeight,
+        );
+      case CameraType.face:
+        // 面部：人脸轮廓的边界框
+        double width, height;
+        if (isLandscape) {
+          // 横屏时，使用高度作为基准，保持人脸比例
+          height = screenSize.height * 0.6;
+          width = height * 0.75; // 人脸通常比身高稍宽
+        } else {
+          width = screenSize.width * 0.7;
+          height = screenSize.height * 0.5;
+        }
+        return Rect.fromCenter(
+          center: Offset(centerX, centerY),
+          width: width,
+          height: height,
+        );
+    }
+  }
+
   Future<void> _simulateRecognition() async {
     // TODO: 调用实际的识别接口
     await Future.delayed(const Duration(seconds: 1));
@@ -133,7 +395,7 @@ class _CameraPageState extends State<CameraPage> {
         case CameraType.tongueSurface:
           _recognitionResult = {
             'success': false,
-            'errorMessage': '未检测到图片中西部区域',
+            'errorMessage': '未检测到图片中舌部区域',
           };
           break;
         case CameraType.sublingualVeins:
@@ -314,9 +576,9 @@ class _CameraPageState extends State<CameraPage> {
             ),
           ),
         ),
-        // 底部引导文字
+        // 底部引导文字（根据拍摄类型调整位置，避免与引导框重叠）
         Positioned(
-          bottom: 140,
+          bottom: widget.type == CameraType.face ? 180 : 140,
           left: 0,
           right: 0,
           child: Center(
@@ -365,8 +627,8 @@ class _CameraPageState extends State<CameraPage> {
               mainAxisAlignment: MainAxisAlignment.spaceEvenly,
               children: [
                 IconButton(
-                  icon: const Icon(Icons.refresh, color: Colors.white, size: 30),
-                  onPressed: () {},
+                  icon: const Icon(Icons.flip_camera_ios, color: Colors.white, size: 30),
+                  onPressed: _isInitialized ? _toggleCamera : null,
                 ),
                 GestureDetector(
                   onTap: _isCapturing ? null : _takePicture,
@@ -391,9 +653,7 @@ class _CameraPageState extends State<CameraPage> {
                 ),
                 IconButton(
                   icon: const Icon(Icons.photo_library, color: Colors.white, size: 30),
-                  onPressed: () async {
-                    // TODO: 从相册选择
-                  },
+                  onPressed: _pickImageFromGallery,
                 ),
               ],
             ),
@@ -406,11 +666,10 @@ class _CameraPageState extends State<CameraPage> {
   Widget _buildFailureView() {
     return Stack(
       children: [
-        // 背景图片（拍摄的图片）
+        // 背景（深灰色）
         Positioned.fill(
-          child: Image.file(
-            File(_capturedImage!.path),
-            fit: BoxFit.cover,
+          child: Container(
+            color: const Color(0xFF2C2C2C),
           ),
         ),
         // 顶部导航栏
@@ -471,7 +730,7 @@ class _CameraPageState extends State<CameraPage> {
         ),
         // 错误信息卡片
         Positioned(
-          top: 140,
+          top: 120,
           left: 16,
           right: 16,
           child: Container(
@@ -494,50 +753,69 @@ class _CameraPageState extends State<CameraPage> {
                         fontWeight: FontWeight.bold,
                       ),
                     ),
-                    IconButton(
-                      icon: const Icon(Icons.close, size: 20),
-                      onPressed: () {
-                        setState(() {
-                          _recognitionResult = null;
-                        });
-                      },
-                      padding: EdgeInsets.zero,
-                      constraints: const BoxConstraints(),
+                    GestureDetector(
+                      onTap: _retakePhoto,
+                      child: const Icon(Icons.close, size: 20, color: Colors.grey),
                     ),
                   ],
                 ),
-                const SizedBox(height: 12),
-                // 相机预览区域（显示拍摄的图片）
+                const SizedBox(height: 16),
+                // 相机预览区域（显示拍摄的图片，带蓝色边框）
                 Container(
                   width: double.infinity,
-                  height: 200,
+                  constraints: const BoxConstraints(maxHeight: 250),
                   decoration: BoxDecoration(
-                    color: Colors.grey[200],
                     borderRadius: BorderRadius.circular(8),
-                    border: Border.all(color: Colors.blue, width: 2),
-                  ),
-                  child: ClipRRect(
-                    borderRadius: BorderRadius.circular(6),
-                    child: Image.file(
-                      File(_capturedImage!.path),
-                      fit: BoxFit.cover,
+                    border: Border.all(
+                      color: const Color(0xFF4FC3F7),
+                      width: 2,
                     ),
+                    boxShadow: [
+                      BoxShadow(
+                        color: const Color(0xFF4FC3F7).withOpacity(0.3),
+                        blurRadius: 8,
+                        spreadRadius: 2,
+                      ),
+                    ],
                   ),
-                ),
-                const SizedBox(height: 12),
-                // 错误提示
-                Container(
-                  padding: const EdgeInsets.all(12),
-                  decoration: BoxDecoration(
-                    color: Colors.grey[100],
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                  child: Text(
-                    _recognitionResult!['errorMessage'] ?? '识别失败',
-                    style: const TextStyle(
-                      fontSize: 14,
-                      color: Colors.black87,
-                    ),
+                  child: Stack(
+                    children: [
+                      ClipRRect(
+                        borderRadius: BorderRadius.circular(6),
+                        child: Image.file(
+                          File(_capturedImage!.path),
+                          fit: BoxFit.cover,
+                          width: double.infinity,
+                          height: double.infinity,
+                        ),
+                      ),
+                      // 错误信息横幅（在图片底部）
+                      Positioned(
+                        bottom: 0,
+                        left: 0,
+                        right: 0,
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 12,
+                            vertical: 8,
+                          ),
+                          decoration: BoxDecoration(
+                            color: Colors.grey[900]!.withOpacity(0.8),
+                            borderRadius: const BorderRadius.only(
+                              bottomLeft: Radius.circular(6),
+                              bottomRight: Radius.circular(6),
+                            ),
+                          ),
+                          child: Text(
+                            _recognitionResult!['errorMessage'] ?? '识别失败',
+                            style: const TextStyle(
+                              fontSize: 14,
+                              color: Colors.white,
+                            ),
+                          ),
+                        ),
+                      ),
+                    ],
                   ),
                 ),
               ],
@@ -546,7 +824,7 @@ class _CameraPageState extends State<CameraPage> {
         ),
         // 引导文字和示例图片
         Positioned(
-          bottom: 120,
+          bottom: 100,
           left: 16,
           right: 16,
           child: Column(
@@ -583,7 +861,7 @@ class _CameraPageState extends State<CameraPage> {
               child: ElevatedButton(
                 onPressed: _retakePhoto,
                 style: ElevatedButton.styleFrom(
-                  backgroundColor: Colors.blue,
+                  backgroundColor: const Color(0xFF4FC3F7),
                   foregroundColor: Colors.white,
                   shape: RoundedRectangleBorder(
                     borderRadius: BorderRadius.circular(25),
@@ -611,7 +889,7 @@ class _CameraPageState extends State<CameraPage> {
       case CameraType.tongueSurface:
         examples = [
           {'label': '正确', 'icon': Icons.check_circle, 'color': Colors.green},
-          {'label': '太大', 'icon': Icons.zoom_in, 'color': Colors.orange},
+          {'label': '太偏', 'icon': Icons.swap_horiz, 'color': Colors.orange},
           {'label': '太小', 'icon': Icons.zoom_out, 'color': Colors.orange},
           {'label': '看不全', 'icon': Icons.visibility_off, 'color': Colors.red},
         ];
@@ -627,9 +905,9 @@ class _CameraPageState extends State<CameraPage> {
       case CameraType.face:
         examples = [
           {'label': '正确', 'icon': Icons.check_circle, 'color': Colors.green},
-          {'label': '太大', 'icon': Icons.zoom_in, 'color': Colors.orange},
+          {'label': '太偏', 'icon': Icons.swap_horiz, 'color': Colors.orange},
           {'label': '太小', 'icon': Icons.zoom_out, 'color': Colors.orange},
-          {'label': '不正脸', 'icon': Icons.swap_horiz, 'color': Colors.red},
+          {'label': '非正面', 'icon': Icons.swap_horiz, 'color': Colors.red},
         ];
         break;
     }
@@ -732,30 +1010,10 @@ class _CameraPageState extends State<CameraPage> {
             ),
           ),
         ),
-        // 拍摄的图片（带蓝色边框）
-        Positioned(
-          top: 140,
-          left: 16,
-          right: 16,
-          bottom: 200,
-          child: Container(
-            decoration: BoxDecoration(
-              borderRadius: BorderRadius.circular(8),
-              border: Border.all(color: Colors.blue, width: 2),
-            ),
-            child: ClipRRect(
-              borderRadius: BorderRadius.circular(6),
-              child: Image.file(
-                File(_capturedImage!.path),
-                fit: BoxFit.contain,
-              ),
-            ),
-          ),
-        ),
-        // 识别结果卡片
+        // 识别结果卡片（带关闭按钮）
         if (_recognitionResult != null && _recognitionResult!['success'] == true)
           Positioned(
-            bottom: 100,
+            top: 120,
             left: 16,
             right: 16,
             child: Container(
@@ -778,27 +1036,64 @@ class _CameraPageState extends State<CameraPage> {
                           fontWeight: FontWeight.bold,
                         ),
                       ),
-                      IconButton(
-                        icon: const Icon(Icons.close, size: 20),
-                        onPressed: () {
-                          setState(() {
-                            _recognitionResult = null;
-                          });
-                        },
-                        padding: EdgeInsets.zero,
-                        constraints: const BoxConstraints(),
+                      GestureDetector(
+                        onTap: _retakePhoto,
+                        child: const Icon(Icons.close, size: 20, color: Colors.grey),
                       ),
                     ],
                   ),
-                  const SizedBox(height: 8),
-                  ...(_recognitionResult!['results'] as List)
-                      .map((result) => Padding(
-                            padding: const EdgeInsets.only(bottom: 4),
-                            child: Text(
-                              result.toString(),
-                              style: const TextStyle(fontSize: 14),
-                            ),
-                          )),
+                  const SizedBox(height: 16),
+                  // 拍摄的图片（带蓝色发光边框）
+                  Container(
+                    width: double.infinity,
+                    constraints: const BoxConstraints(maxHeight: 300),
+                    decoration: BoxDecoration(
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(
+                        color: const Color(0xFF4FC3F7),
+                        width: 2,
+                      ),
+                      boxShadow: [
+                        BoxShadow(
+                          color: const Color(0xFF4FC3F7).withOpacity(0.3),
+                          blurRadius: 8,
+                          spreadRadius: 2,
+                        ),
+                      ],
+                    ),
+                    child: ClipRRect(
+                      borderRadius: BorderRadius.circular(6),
+                      child: Image.file(
+                        File(_capturedImage!.path),
+                        fit: BoxFit.contain,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                  // 识别结果标签
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
+                    children: (_recognitionResult!['results'] as List)
+                        .map((result) => Container(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 12,
+                                vertical: 6,
+                              ),
+                              decoration: BoxDecoration(
+                                color: Colors.grey[200],
+                                borderRadius: BorderRadius.circular(16),
+                              ),
+                              child: Text(
+                                result.toString(),
+                                style: TextStyle(
+                                  fontSize: 14,
+                                  color: Colors.grey[800],
+                                ),
+                              ),
+                            ))
+                        .toList(),
+                  ),
                 ],
               ),
             ),
@@ -835,7 +1130,7 @@ class _CameraPageState extends State<CameraPage> {
                   child: ElevatedButton(
                     onPressed: _confirmPhoto,
                     style: ElevatedButton.styleFrom(
-                      backgroundColor: Colors.blue,
+                      backgroundColor: const Color(0xFF4FC3F7),
                       foregroundColor: Colors.white,
                       padding: const EdgeInsets.symmetric(vertical: 12),
                       shape: RoundedRectangleBorder(
@@ -862,64 +1157,87 @@ class CameraOverlayPainter extends CustomPainter {
 
   @override
   void paint(Canvas canvas, Size size) {
-    final paint = Paint()
+    final centerX = size.width / 2;
+    final centerY = size.height / 2;
+
+    // 创建遮罩路径（整个屏幕）
+    final maskPath = Path()
+      ..addRect(Rect.fromLTWH(0, 0, size.width, size.height));
+
+    // 根据类型创建引导框路径（需要排除的区域）
+    Path guidePath;
+    switch (type) {
+      case CameraType.tongueSurface:
+        guidePath = _getTongueSurfacePath(centerX, centerY, size);
+        break;
+      case CameraType.sublingualVeins:
+        guidePath = _getSublingualVeinsPath(centerX, centerY, size);
+        break;
+      case CameraType.face:
+        guidePath = _getFacePath(centerX, centerY, size);
+        break;
+    }
+
+    // 从遮罩路径中排除引导框路径（使用 PathOperation.difference）
+    final finalPath = Path.combine(
+      PathOperation.difference,
+      maskPath,
+      guidePath,
+    );
+
+    // 绘制半透明遮罩（排除引导框区域）
+    final maskPaint = Paint()
       ..color = Colors.black.withValues(alpha: 0.6)
       ..style = PaintingStyle.fill;
+    canvas.drawPath(finalPath, maskPaint);
 
-    // 绘制遮罩
-    canvas.drawRect(Rect.fromLTWH(0, 0, size.width, size.height), paint);
-
-    // 绘制引导框
+    // 绘制引导框边框
     final guidePaint = Paint()
       ..color = Colors.white
       ..style = PaintingStyle.stroke
       ..strokeWidth = 3;
+    canvas.drawPath(guidePath, guidePaint);
 
-    final centerX = size.width / 2;
-    final centerY = size.height / 2;
-
-    // 根据类型绘制不同的引导框
-    switch (type) {
-      case CameraType.tongueSurface:
-        // 舌面：大U形（张开的嘴巴，舌头伸展）
-        _drawTongueSurfaceGuide(canvas, centerX, centerY, size, guidePaint);
-        break;
-      case CameraType.sublingualVeins:
-        // 舌下脉络：小弧形（嘴巴张开，舌尖顶住上颚）
-        _drawSublingualVeinsGuide(canvas, centerX, centerY, size, guidePaint);
-        break;
-      case CameraType.face:
-        // 面部：人脸轮廓
-        _drawFaceGuide(canvas, centerX, centerY, size, guidePaint);
-        break;
+    // 对于舌下脉络，需要绘制中间的垂直线（舌系带）
+    if (type == CameraType.sublingualVeins) {
+      final bool isLandscape = size.width > size.height;
+      final double width = isLandscape
+          ? size.height * 0.3 * 0.7
+          : size.width * 0.5;
+      final double height = isLandscape
+          ? size.height * 0.3
+          : size.height * 0.25;
+      final double veinHeight = height * 0.6;
+      final double veinTop = centerY - height * 0.15;
+      final double veinBottom = centerY + veinHeight * 0.3;
+      
+      canvas.drawLine(
+        Offset(centerX, veinTop),
+        Offset(centerX, veinBottom),
+        guidePaint,
+      );
     }
   }
 
-  // 绘制舌面引导框（大U形）
-  void _drawTongueSurfaceGuide(
-    Canvas canvas,
-    double centerX,
-    double centerY,
-    Size size,
-    Paint paint,
-  ) {
-    final width = size.width * 0.6;
-    final height = size.height * 0.35;
+  // 获取舌面引导框路径
+  Path _getTongueSurfacePath(double centerX, double centerY, Size size) {
+    final bool isLandscape = size.width > size.height;
+    final double width = isLandscape 
+        ? size.height * 0.4 * 0.8  // 横屏时使用高度作为基准
+        : size.width * 0.6;
+    final double height = isLandscape
+        ? size.height * 0.4
+        : size.height * 0.35;
     
-    // 绘制嘴巴外轮廓（椭圆形）
-    final mouthRect = Rect.fromCenter(
-      center: Offset(centerX, centerY),
-      width: width,
-      height: height * 0.6,
-    );
+    // 创建嘴巴外轮廓路径（椭圆形）
+    final mouthPath = Path()
+      ..addOval(Rect.fromCenter(
+        center: Offset(centerX, centerY),
+        width: width,
+        height: height * 0.6,
+      ));
     
-    // 清除嘴巴区域
-    canvas.drawOval(mouthRect, Paint()..blendMode = BlendMode.clear);
-    
-    // 绘制嘴巴边框
-    canvas.drawOval(mouthRect, paint);
-    
-    // 绘制舌头轮廓（大U形）
+    // 创建舌头轮廓路径（大U形）
     final tonguePath = Path();
     final tongueWidth = width * 0.7;
     final tongueHeight = height * 0.8;
@@ -943,38 +1261,29 @@ class CameraOverlayPainter extends CustomPainter {
     );
     tonguePath.close();
     
-    // 清除舌头区域
-    canvas.drawPath(tonguePath, Paint()..blendMode = BlendMode.clear);
-    
-    // 绘制舌头边框
-    canvas.drawPath(tonguePath, paint);
+    // 合并嘴巴和舌头路径
+    return Path.combine(PathOperation.union, mouthPath, tonguePath);
   }
 
-  // 绘制舌下脉络引导框（小弧形）
-  void _drawSublingualVeinsGuide(
-    Canvas canvas,
-    double centerX,
-    double centerY,
-    Size size,
-    Paint paint,
-  ) {
-    final width = size.width * 0.5;
-    final height = size.height * 0.25;
+  // 获取舌下脉络引导框路径
+  Path _getSublingualVeinsPath(double centerX, double centerY, Size size) {
+    final bool isLandscape = size.width > size.height;
+    final double width = isLandscape
+        ? size.height * 0.3 * 0.7  // 横屏时使用高度作为基准
+        : size.width * 0.5;
+    final double height = isLandscape
+        ? size.height * 0.3
+        : size.height * 0.25;
     
-    // 绘制嘴巴外轮廓
-    final mouthRect = Rect.fromCenter(
-      center: Offset(centerX, centerY),
-      width: width,
-      height: height * 0.7,
-    );
+    // 创建嘴巴外轮廓路径
+    final mouthPath = Path()
+      ..addOval(Rect.fromCenter(
+        center: Offset(centerX, centerY),
+        width: width,
+        height: height * 0.7,
+      ));
     
-    // 清除嘴巴区域
-    canvas.drawOval(mouthRect, Paint()..blendMode = BlendMode.clear);
-    
-    // 绘制嘴巴边框
-    canvas.drawOval(mouthRect, paint);
-    
-    // 绘制舌下脉络轮廓（小弧形，中间有垂直线表示舌系带）
+    // 创建舌下脉络轮廓路径（小弧形）
     final veinPath = Path();
     final veinWidth = width * 0.5;
     final veinHeight = height * 0.6;
@@ -983,7 +1292,6 @@ class CameraOverlayPainter extends CustomPainter {
     final veinRight = centerX + veinWidth / 2;
     final veinBottom = centerY + veinHeight * 0.3;
     
-    // 绘制弧形
     veinPath.moveTo(veinLeft, veinTop);
     veinPath.quadraticBezierTo(
       centerX,
@@ -991,44 +1299,29 @@ class CameraOverlayPainter extends CustomPainter {
       veinRight,
       veinTop,
     );
+    veinPath.close();
     
-    // 清除舌下区域
-    canvas.drawPath(veinPath, Paint()..blendMode = BlendMode.clear);
-    
-    // 绘制舌下边框
-    canvas.drawPath(veinPath, paint);
-    
-    // 绘制中间的垂直线（舌系带）
-    canvas.drawLine(
-      Offset(centerX, veinTop),
-      Offset(centerX, veinBottom),
-      paint,
-    );
+    // 合并嘴巴和舌下路径
+    return Path.combine(PathOperation.union, mouthPath, veinPath);
   }
 
-  // 绘制面部引导框（人脸轮廓）
-  void _drawFaceGuide(
-    Canvas canvas,
-    double centerX,
-    double centerY,
-    Size size,
-    Paint paint,
-  ) {
-    final width = size.width * 0.7;
-    final height = size.height * 0.5;
+  // 获取面部引导框路径
+  Path _getFacePath(double centerX, double centerY, Size size) {
+    final bool isLandscape = size.width > size.height;
+    final double width = isLandscape
+        ? size.height * 0.6 * 0.75  // 横屏时使用高度作为基准，保持人脸比例
+        : size.width * 0.7;
+    final double height = isLandscape
+        ? size.height * 0.6
+        : size.height * 0.5;
     
-    // 绘制人脸轮廓（椭圆形）
-    final faceRect = Rect.fromCenter(
-      center: Offset(centerX, centerY),
-      width: width,
-      height: height,
-    );
-    
-    // 清除人脸区域
-    canvas.drawOval(faceRect, Paint()..blendMode = BlendMode.clear);
-    
-    // 绘制人脸边框
-    canvas.drawOval(faceRect, paint);
+    // 创建人脸轮廓路径（椭圆形）
+    return Path()
+      ..addOval(Rect.fromCenter(
+        center: Offset(centerX, centerY),
+        width: width,
+        height: height,
+      ));
   }
 
   @override
