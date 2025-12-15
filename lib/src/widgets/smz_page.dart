@@ -27,9 +27,11 @@ class _SmzPageState extends State<SmzPage> {
   static const String _appSecret = '7a3d4f1a-a8ad-494e-9f72-bbcec7ae230f';
   static const String _authCode = '4e06c40b3b61432d9889b041ea27dab9';
   // 识别接口的 baseUrl
-  static const String _tongueApiBaseUrl = 'https://devapi.macrocura.com';
-  // 上传接口的 baseUrl（根据小程序配置：TARO_APP_API="https://devapi.lightcura.com"）
-  static const String _uploadApiBaseUrl = 'https://devapi.lightcura.com';
+  // static const String _tongueApiBaseUrl = 'https://api.macrocura.com';//生产
+  static const String _tongueApiBaseUrl = 'https://qaapi.macrocura.com';//测试
+  // 上传接口的 baseUrl
+  // static const String _uploadApiBaseUrl = 'https://api.lightcura.com';//生产
+  static const String _uploadApiBaseUrl = 'https://qaapi.lightcura.com';//测试
   static const String _businessType = 'mini_tongue';
 
   @override
