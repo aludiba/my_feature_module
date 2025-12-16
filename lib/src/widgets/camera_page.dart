@@ -44,7 +44,7 @@ class CameraPage extends StatefulWidget {
   State<CameraPage> createState() => _CameraPageState();
 }
 
-class _CameraPageState extends State<CameraPage> {
+class _CameraPageState extends State<CameraPage> with SingleTickerProviderStateMixin {
   CameraController? _controller;
   List<CameraDescription>? _cameras;
   int _currentCameraIndex = 0;
@@ -53,11 +53,16 @@ class _CameraPageState extends State<CameraPage> {
   XFile? _capturedImage;
   Map<String, dynamic>? _recognitionResult;
   final ImagePicker _imagePicker = ImagePicker();
+  AnimationController? _scanAnimationController;
 
   @override
   void initState() {
     super.initState();
     _initializeCamera();
+    _scanAnimationController = AnimationController(
+      vsync: this,
+      duration: const Duration(seconds: 2),
+    )..repeat();
   }
 
   Future<void> _initializeCamera() async {
@@ -108,7 +113,7 @@ class _CameraPageState extends State<CameraPage> {
     try {
       _controller = CameraController(
         _cameras![cameraIndex],
-        ResolutionPreset.high,
+        ResolutionPreset.veryHigh, // 提高分辨率以满足API要求
         enableAudio: false,
       );
 
@@ -161,17 +166,66 @@ class _CameraPageState extends State<CameraPage> {
           error: {'imagePath': image.path},
         );
 
-        // 从相册选择的图片不进行裁剪，原样保存
+        // 从相册选择的图片需要检查尺寸是否符合要求
+        final Uint8List imageBytes = await File(image.path).readAsBytes();
+        img.Image? selectedImage = img.decodeImage(imageBytes);
+        
+        if (selectedImage == null) {
+          throw Exception('无法解码图片');
+        }
+        
+        developer.log(
+          '相册图片尺寸检查',
+          name: 'CameraPage',
+          error: {
+            'imageSize': '${selectedImage.width}x${selectedImage.height}',
+          },
+        );
+        
+        // 检查最短边是否满足要求（至少400px，API要求300px，设置为400px以保证质量且避免过度放大）
+        const int minShortEdge = 400;
+        final int shortEdge = selectedImage.width < selectedImage.height 
+            ? selectedImage.width 
+            : selectedImage.height;
+        
+        // 如果最短边小于要求，进行等比例缩放
+        if (shortEdge < minShortEdge) {
+          final double scale = minShortEdge / shortEdge;
+          final int newWidth = (selectedImage.width * scale).round();
+          final int newHeight = (selectedImage.height * scale).round();
+          
+          developer.log(
+            '相册图片尺寸不符合要求，进行缩放',
+            name: 'CameraPage',
+            error: {
+              'originalSize': '${selectedImage.width}x${selectedImage.height}',
+              'scale': scale,
+              'newSize': '${newWidth}x${newHeight}',
+            },
+          );
+          
+          selectedImage = img.copyResize(
+            selectedImage,
+            width: newWidth,
+            height: newHeight,
+            interpolation: img.Interpolation.linear,
+          );
+        }
+        
+        // 保存处理后的图片
         final Directory tempDir = await getTemporaryDirectory();
         final String fileName = '${DateTime.now().millisecondsSinceEpoch}.jpg';
         final String filePath = path.join(tempDir.path, fileName);
-        final File imageFile = File(image.path);
-        await imageFile.copy(filePath);
+        final File processedFile = File(filePath);
+        await processedFile.writeAsBytes(img.encodeJpg(selectedImage, quality: 90));
 
         developer.log(
           '图片保存完成',
           name: 'CameraPage',
-          error: {'filePath': filePath},
+          error: {
+            'filePath': filePath,
+            'finalSize': '${selectedImage.width}x${selectedImage.height}',
+          },
         );
 
         setState(() {
@@ -207,6 +261,7 @@ class _CameraPageState extends State<CameraPage> {
   @override
   void dispose() {
     _controller?.dispose();
+    _scanAnimationController?.dispose();
     super.dispose();
   }
 
@@ -339,13 +394,53 @@ class _CameraPageState extends State<CameraPage> {
       );
 
       // 裁剪图片
-      final img.Image croppedImage = img.copyCrop(
+      img.Image croppedImage = img.copyCrop(
         originalImage,
         x: safeX,
         y: safeY,
         width: safeWidth,
         height: safeHeight,
       );
+
+      // 检查裁剪后图片的最短边，确保至少400px（API要求300px，设置为400px以保证质量且避免过度放大）
+      const int minShortEdge = 400;
+      final int shortEdge = croppedImage.width < croppedImage.height 
+          ? croppedImage.width 
+          : croppedImage.height;
+      
+      developer.log(
+        '裁剪后图片尺寸检查',
+        name: 'CameraPage',
+        error: {
+          'croppedSize': '${croppedImage.width}x${croppedImage.height}',
+          'shortEdge': shortEdge,
+          'minRequired': minShortEdge,
+        },
+      );
+      
+      // 如果最短边小于要求的尺寸，进行等比例缩放
+      if (shortEdge < minShortEdge) {
+        final double scale = minShortEdge / shortEdge;
+        final int newWidth = (croppedImage.width * scale).round();
+        final int newHeight = (croppedImage.height * scale).round();
+        
+        developer.log(
+          '图片尺寸不符合要求，进行缩放',
+          name: 'CameraPage',
+          error: {
+            'originalSize': '${croppedImage.width}x${croppedImage.height}',
+            'scale': scale,
+            'newSize': '${newWidth}x${newHeight}',
+          },
+        );
+        
+        croppedImage = img.copyResize(
+          croppedImage,
+          width: newWidth,
+          height: newHeight,
+          interpolation: img.Interpolation.linear,
+        );
+      }
 
       // 保存裁剪后的图片
       final Directory tempDir = await getTemporaryDirectory();
@@ -359,7 +454,7 @@ class _CameraPageState extends State<CameraPage> {
         name: 'CameraPage',
         error: {
           'originalSize': '${imageWidth}x${imageHeight}',
-          'croppedSize': '${safeWidth}x${safeHeight}',
+          'finalSize': '${croppedImage.width}x${croppedImage.height}',
           'filePath': filePath,
         },
       );
@@ -448,6 +543,7 @@ class _CameraPageState extends State<CameraPage> {
     switch (widget.type) {
       case CameraType.tongueSurface:
         // 舌面：嘴巴外轮廓 + 舌头轮廓的边界框
+        // 注意：裁剪时需要给舌头周围留出更多空间，确保AI能识别到完整的舌部区域
         double width, height;
         if (isLandscape) {
           // 横屏时，使用高度作为基准
@@ -462,11 +558,18 @@ class _CameraPageState extends State<CameraPage> {
         final double tongueBottom = centerY + tongueHeight * 0.5;
         final double top = centerY - height * 0.1;
         final double bottom = tongueBottom;
+        
+        // 为舌面拍照增加边距（上下左右各增加30%），确保舌头完整
+        final double originalWidth = width;
+        final double originalHeight = bottom - top;
+        final double paddingX = originalWidth * 0.3;
+        final double paddingY = originalHeight * 0.3;
+        
         return Rect.fromLTWH(
-          centerX - width / 2,
-          top,
-          width,
-          bottom - top,
+          centerX - width / 2 - paddingX,
+          top - paddingY,
+          width + paddingX * 2,
+          bottom - top + paddingY * 2,
         );
       case CameraType.sublingualVeins:
         // 舌下脉络：嘴巴外轮廓的边界框
@@ -730,9 +833,11 @@ class _CameraPageState extends State<CameraPage> {
       body: SafeArea(
         child: _capturedImage == null 
             ? _buildCameraView() 
-            : (_recognitionResult != null && _recognitionResult!['success'] == false
-                ? _buildFailureView()
-                : _buildPreviewView()),
+            : (_recognitionResult == null
+                ? _buildRecognizingView() // 识别中状态
+                : (_recognitionResult!['success'] == false
+                    ? _buildFailureView()
+                    : _buildPreviewView())),
       ),
     );
   }
@@ -897,6 +1002,110 @@ class _CameraPageState extends State<CameraPage> {
         ),
       ],
     );
+  }
+
+  Widget _buildRecognizingView() {
+    return Stack(
+      children: [
+        // 背景图片
+        Positioned.fill(
+          child: Image.file(
+            File(_capturedImage!.path),
+            fit: BoxFit.cover,
+          ),
+        ),
+        // 半透明遮罩
+        Positioned.fill(
+          child: Container(
+            color: Colors.black.withOpacity(0.4),
+          ),
+        ),
+        // 顶部标题栏
+        Positioned(
+          top: 0,
+          left: 0,
+          right: 0,
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+            child: Row(
+              children: [
+                IconButton(
+                  icon: const Icon(Icons.arrow_back, color: Colors.white, size: 24),
+                  onPressed: () => Navigator.of(context).pop(),
+                ),
+                Expanded(
+                  child: Text(
+                    _getTitle(),
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 18,
+                      fontWeight: FontWeight.w500,
+                    ),
+                    textAlign: TextAlign.center,
+                  ),
+                ),
+                const SizedBox(width: 48), // 平衡左侧的返回按钮
+              ],
+            ),
+          ),
+        ),
+        // 中心扫描动画
+        Center(
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              // 扫描动画
+              SizedBox(
+                width: 200,
+                height: 200,
+                child: AnimatedBuilder(
+                  animation: _scanAnimationController!,
+                  builder: (context, child) {
+                    return Transform.rotate(
+                      angle: _scanAnimationController!.value * 2 * 3.14159,
+                      child: CustomPaint(
+                        size: const Size(200, 200),
+                        painter: ScanningCirclePainter(_scanAnimationController!.value),
+                      ),
+                    );
+                  },
+                ),
+              ),
+              const SizedBox(height: 32),
+              // 识别中文字
+              const Text(
+                '识别中...',
+                style: TextStyle(
+                  color: Colors.white,
+                  fontSize: 20,
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
+              const SizedBox(height: 8),
+              // 提示文字
+              Text(
+                _getRecognizingText(),
+                style: const TextStyle(
+                  color: Colors.white70,
+                  fontSize: 14,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  String _getRecognizingText() {
+    switch (widget.type) {
+      case CameraType.tongueSurface:
+        return '正在识别舌面特征';
+      case CameraType.sublingualVeins:
+        return '正在识别舌下脉络';
+      case CameraType.face:
+        return '正在识别面部特征';
+    }
   }
 
   Widget _buildFailureView() {
@@ -1373,7 +1582,7 @@ class _CameraPageState extends State<CameraPage> {
                         borderRadius: BorderRadius.circular(25),
                       ),
                     ),
-                    child: const Text('下一步'),
+                    child: const Text('完成'),
                   ),
                 ),
               ],
@@ -1562,5 +1771,58 @@ class CameraOverlayPainter extends CustomPainter {
 
   @override
   bool shouldRepaint(CustomPainter oldDelegate) => false;
+}
+
+/// 扫描圆环绘制器
+class ScanningCirclePainter extends CustomPainter {
+  final double progress;
+
+  ScanningCirclePainter(this.progress);
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final center = Offset(size.width / 2, size.height / 2);
+    final radius = size.width / 2;
+
+    // 绘制外圈（半透明）
+    final outerPaint = Paint()
+      ..color = const Color(0xFF4FC3F7).withOpacity(0.2)
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 2;
+    canvas.drawCircle(center, radius, outerPaint);
+
+    // 绘制扫描弧线（渐变效果）
+    final scanPaint = Paint()
+      ..color = const Color(0xFF4FC3F7)
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 4
+      ..strokeCap = StrokeCap.round;
+
+    // 绘制多个弧线形成扫描效果
+    for (int i = 0; i < 3; i++) {
+      final angle = (progress * 2 * 3.14159) - (i * 0.3);
+      final opacity = 1.0 - (i * 0.3);
+      scanPaint.color = Color(0xFF4FC3F7).withOpacity(opacity);
+      
+      canvas.drawArc(
+        Rect.fromCircle(center: center, radius: radius - (i * 10)),
+        angle,
+        0.8,
+        false,
+        scanPaint,
+      );
+    }
+
+    // 绘制内圈装饰线
+    final innerPaint = Paint()
+      ..color = const Color(0xFF4FC3F7).withOpacity(0.3)
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1;
+    canvas.drawCircle(center, radius * 0.6, innerPaint);
+  }
+
+  @override
+  bool shouldRepaint(ScanningCirclePainter oldDelegate) => 
+      oldDelegate.progress != progress;
 }
 
