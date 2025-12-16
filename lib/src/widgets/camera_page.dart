@@ -50,7 +50,8 @@ class _CameraPageState extends State<CameraPage> with SingleTickerProviderStateM
   int _currentCameraIndex = 0;
   bool _isInitialized = false;
   bool _isCapturing = false;
-  XFile? _capturedImage;
+  XFile? _capturedImage; // 裁剪后的图片（用于上传和识别）
+  String? _originalImagePath; // 原始完整照片路径（用于识别中背景显示）
   Map<String, dynamic>? _recognitionResult;
   final ImagePicker _imagePicker = ImagePicker();
   AnimationController? _scanAnimationController;
@@ -229,6 +230,7 @@ class _CameraPageState extends State<CameraPage> with SingleTickerProviderStateM
         );
 
         setState(() {
+          _originalImagePath = filePath; // 相册图片原始路径和处理后路径相同
           _capturedImage = XFile(filePath);
         });
 
@@ -286,6 +288,41 @@ class _CameraPageState extends State<CameraPage> with SingleTickerProviderStateM
         error: {'imagePath': image.path},
       );
       
+      // 处理原始照片（如果是前置摄像头，需要翻转）
+      String originalPath = image.path;
+      if (_cameras != null && 
+          _currentCameraIndex >= 0 && 
+          _currentCameraIndex < _cameras!.length &&
+          _cameras![_currentCameraIndex].lensDirection == CameraLensDirection.front) {
+        developer.log(
+          '前置摄像头，对原始照片进行镜像翻转',
+          name: 'CameraPage',
+        );
+        
+        // 读取原始图片
+        final Uint8List imageBytes = await File(image.path).readAsBytes();
+        img.Image? originalImage = img.decodeImage(imageBytes);
+        
+        if (originalImage != null) {
+          // 翻转图片
+          originalImage = img.flipHorizontal(originalImage);
+          
+          // 保存翻转后的原始图片
+          final Directory tempDir = await getTemporaryDirectory();
+          final String fileName = '${DateTime.now().millisecondsSinceEpoch}_original_flipped.jpg';
+          final String flippedPath = path.join(tempDir.path, fileName);
+          final File flippedFile = File(flippedPath);
+          await flippedFile.writeAsBytes(img.encodeJpg(originalImage, quality: 90));
+          
+          originalPath = flippedPath;
+          developer.log(
+            '原始照片翻转完成',
+            name: 'CameraPage',
+            error: {'flippedPath': flippedPath},
+          );
+        }
+      }
+      
       // 裁剪图片，只保留引导框内的部分
       developer.log(
         '开始裁剪图片',
@@ -299,7 +336,8 @@ class _CameraPageState extends State<CameraPage> with SingleTickerProviderStateM
       );
       
       setState(() {
-        _capturedImage = XFile(croppedImagePath);
+        _originalImagePath = originalPath; // 保存原始照片路径（已翻转）
+        _capturedImage = XFile(croppedImagePath); // 保存裁剪后的照片（用于上传）
       });
 
       developer.log(
@@ -440,6 +478,18 @@ class _CameraPageState extends State<CameraPage> with SingleTickerProviderStateM
           height: newHeight,
           interpolation: img.Interpolation.linear,
         );
+      }
+
+      // 如果是前置摄像头，需要水平翻转图片（镜像翻转）
+      if (_cameras != null && 
+          _currentCameraIndex >= 0 && 
+          _currentCameraIndex < _cameras!.length &&
+          _cameras![_currentCameraIndex].lensDirection == CameraLensDirection.front) {
+        developer.log(
+          '前置摄像头，进行镜像翻转',
+          name: 'CameraPage',
+        );
+        croppedImage = img.flipHorizontal(croppedImage);
       }
 
       // 保存裁剪后的图片
@@ -789,6 +839,7 @@ class _CameraPageState extends State<CameraPage> with SingleTickerProviderStateM
   void _retakePhoto() {
     setState(() {
       _capturedImage = null;
+      _originalImagePath = null;
       _recognitionResult = null;
     });
   }
@@ -849,6 +900,10 @@ class _CameraPageState extends State<CameraPage> with SingleTickerProviderStateM
       );
     }
 
+    // 获取屏幕尺寸判断是否为横屏
+    final screenSize = MediaQuery.of(context).size;
+    final isLandscape = screenSize.width > screenSize.height;
+
     return Stack(
       children: [
         // 相机预览
@@ -896,43 +951,95 @@ class _CameraPageState extends State<CameraPage> with SingleTickerProviderStateM
             ),
           ),
         ),
-        // 说明文字
-        Positioned(
-          top: 60,
-          left: 16,
-          right: 16,
-          child: Container(
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-            decoration: BoxDecoration(
-              color: Colors.transparent,
-            ),
-            child: Text(
-              _getInstructions(),
-              style: const TextStyle(
-                color: Colors.white,
-                fontSize: 14,
-                height: 1.5,
+        // 说明文字（横屏时移到左上角，竖屏时在顶部居中）
+        if (isLandscape)
+          // 横屏模式：说明文字在左上角
+          Positioned(
+            top: 60,
+            left: 80,
+            width: 180,
+            child: Container(
+              padding: const EdgeInsets.all(10),
+              decoration: BoxDecoration(
+                color: Colors.black.withOpacity(0.6),
+                borderRadius: BorderRadius.circular(8),
               ),
-              textAlign: TextAlign.center,
-            ),
-          ),
-        ),
-        // 底部引导文字（根据拍摄类型调整位置，避免与引导框重叠）
-        Positioned(
-          bottom: widget.type == CameraType.face ? 180 : 140,
-          left: 0,
-          right: 0,
-          child: Center(
-            child: Text(
-              _getGuideText(),
-              style: const TextStyle(
-                color: Colors.white,
-                fontSize: 16,
-                fontWeight: FontWeight.w500,
+              child: Text(
+                _getInstructions(),
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 11,
+                  height: 1.4,
+                ),
+                textAlign: TextAlign.left,
               ),
             ),
+          )
+        else
+          // 竖屏模式：说明文字在顶部
+          Positioned(
+            top: 60,
+            left: 16,
+            right: 16,
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+              decoration: BoxDecoration(
+                color: Colors.transparent,
+              ),
+              child: Text(
+                _getInstructions(),
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 14,
+                  height: 1.5,
+                ),
+                textAlign: TextAlign.center,
+              ),
+            ),
           ),
-        ),
+        // 底部引导文字（根据拍摄类型和屏幕方向调整位置，避免与引导框重叠）
+        if (!isLandscape)
+          // 竖屏模式：引导文字在底部
+          Positioned(
+            bottom: widget.type == CameraType.face ? 180 : 140,
+            left: 0,
+            right: 0,
+            child: Center(
+              child: Text(
+                _getGuideText(),
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 16,
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
+            ),
+          )
+        else
+          // 横屏模式：引导文字在底部中央
+          Positioned(
+            bottom: 100,
+            left: 0,
+            right: 0,
+            child: Center(
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
+                decoration: BoxDecoration(
+                  color: Colors.black.withOpacity(0.6),
+                  borderRadius: BorderRadius.circular(20),
+                ),
+                child: Text(
+                  _getGuideText(),
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 14,
+                    fontWeight: FontWeight.w500,
+                  ),
+                  textAlign: TextAlign.center,
+                ),
+              ),
+            ),
+          ),
         // 左下角缩略图
         Positioned(
           bottom: 140,
@@ -1007,10 +1114,10 @@ class _CameraPageState extends State<CameraPage> with SingleTickerProviderStateM
   Widget _buildRecognizingView() {
     return Stack(
       children: [
-        // 背景图片
+        // 背景图片（使用原始完整照片）
         Positioned.fill(
           child: Image.file(
-            File(_capturedImage!.path),
+            File(_originalImagePath ?? _capturedImage!.path),
             fit: BoxFit.cover,
           ),
         ),
