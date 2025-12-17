@@ -146,16 +146,15 @@ class HttpService {
       }
       
       // 确定上传接口的完整 URL
-      // 根据小程序代码：上传接口路径是 /api/his-system/file/
-      // 注意：上传接口可能在不同的服务器上（不同于识别接口的服务器）
+      // 上传接口路径是 /api/his-system/file/
+      // 注意：不同于识别接口的服务器
       // 如果 uploadBaseUrl 未提供，尝试使用 _baseUrl，如果都没有则使用 tongueApiBaseUrl
       final String finalBaseUrl = uploadBaseUrl ?? _baseUrl ?? '';
       
-      // 上传接口路径（根据小程序代码）
+      // 上传接口路径
       String uploadPath = '/api/his-system/file/';
       
       // 如果 finalBaseUrl 为空，说明没有配置上传接口的 baseUrl
-      // 这可能是一个问题，因为上传接口可能在不同的服务器上
       if (finalBaseUrl.isEmpty) {
         developer.log(
           '警告：上传接口 baseUrl 未配置',
@@ -176,7 +175,7 @@ class HttpService {
           'fullUrl': '$finalBaseUrl$uploadPath',
           'filePath': imagePath,
           'headers': headers,
-          'hasToken': token != null && token!.isNotEmpty,
+          'hasToken': token != null && token.isNotEmpty,
         },
       );
 

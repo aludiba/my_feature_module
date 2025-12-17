@@ -387,33 +387,111 @@ class _CameraPageState extends State<CameraPage> with SingleTickerProviderStateM
         throw Exception('无法解码图片');
       }
 
-      // 获取相机预览尺寸和实际图片尺寸
+      // 获取屏幕尺寸（注意：这里使用屏幕尺寸而不是相机预览尺寸）
+      final Size screenSize = MediaQuery.of(context).size;
       final Size previewSize = _controller!.value.previewSize ?? Size.zero;
       final int imageWidth = originalImage.width;
       final int imageHeight = originalImage.height;
+      
+      // 判断照片是否需要旋转（如果照片是横向的，但屏幕是竖向的，则需要旋转）
+      final bool isImageLandscape = imageWidth > imageHeight;
+      final bool isScreenPortrait = screenSize.width < screenSize.height;
+      final bool needsRotation = isImageLandscape && isScreenPortrait;
 
       developer.log(
         '图片尺寸信息',
         name: 'CameraPage',
         error: {
+          'screenSize': '${screenSize.width}x${screenSize.height}',
           'previewSize': '${previewSize.width}x${previewSize.height}',
           'imageSize': '${imageWidth}x${imageHeight}',
+          'isImageLandscape': isImageLandscape,
+          'isScreenPortrait': isScreenPortrait,
+          'needsRotation': needsRotation,
         },
       );
 
-      // 计算引导框在屏幕上的位置和大小
-      final Rect guideRect = _getGuideBoxRect(previewSize);
+      // 计算引导框在屏幕上的位置和大小（使用屏幕尺寸）
+      final Rect guideRect = _getGuideBoxRect(screenSize);
 
-      // 将屏幕坐标转换为图片坐标
-      final double scaleX = imageWidth / previewSize.width;
-      final double scaleY = imageHeight / previewSize.height;
+      // 根据是否需要旋转来计算不同的坐标映射
+      double scaleX, scaleY, scale, offsetX, offsetY;
+      int cropX, cropY, cropWidth, cropHeight;
       
-      // 计算裁剪区域（使用较小的缩放比例以确保不超出图片范围）
-      final double scale = scaleX < scaleY ? scaleX : scaleY;
-      final int cropX = ((guideRect.left) * scale).round();
-      final int cropY = ((guideRect.top) * scale).round();
-      final int cropWidth = (guideRect.width * scale).round();
-      final int cropHeight = (guideRect.height * scale).round();
+      if (needsRotation) {
+        // 照片是横向的，需要旋转90度
+        // 图片的 width 对应屏幕的 height，图片的 height 对应屏幕的 width
+        scaleX = imageHeight / screenSize.width;
+        scaleY = imageWidth / screenSize.height;
+        
+        developer.log(
+          '照片需要旋转90度',
+          name: 'CameraPage',
+          error: {
+            'scaleX': scaleX,
+            'scaleY': scaleY,
+          },
+        );
+        
+        // 使用较大的缩放比例以确保覆盖整个屏幕（BoxFit.cover）
+        scale = scaleX > scaleY ? scaleX : scaleY;
+        
+        // 计算居中偏移
+        offsetX = (imageHeight - screenSize.width * scale) / 2;
+        offsetY = (imageWidth - screenSize.height * scale) / 2;
+        
+        developer.log(
+          '居中偏移',
+          name: 'CameraPage',
+          error: {
+            'scale': scale,
+            'offsetX': offsetX,
+            'offsetY': offsetY,
+          },
+        );
+        
+        // 坐标映射（考虑旋转）
+        cropX = (offsetY + guideRect.top * scale).round();
+        cropY = (offsetX + guideRect.left * scale).round();
+        cropWidth = (guideRect.height * scale).round();
+        cropHeight = (guideRect.width * scale).round();
+      } else {
+        // 照片是竖向的，不需要旋转（或已经是正确方向）
+        scaleX = imageWidth / screenSize.width;
+        scaleY = imageHeight / screenSize.height;
+        
+        developer.log(
+          '照片不需要旋转',
+          name: 'CameraPage',
+          error: {
+            'scaleX': scaleX,
+            'scaleY': scaleY,
+          },
+        );
+        
+        // 使用较大的缩放比例以确保覆盖整个屏幕（BoxFit.cover）
+        scale = scaleX > scaleY ? scaleX : scaleY;
+        
+        // 计算居中偏移
+        offsetX = (imageWidth - screenSize.width * scale) / 2;
+        offsetY = (imageHeight - screenSize.height * scale) / 2;
+        
+        developer.log(
+          '居中偏移',
+          name: 'CameraPage',
+          error: {
+            'scale': scale,
+            'offsetX': offsetX,
+            'offsetY': offsetY,
+          },
+        );
+        
+        // 直接映射坐标
+        cropX = (offsetX + guideRect.left * scale).round();
+        cropY = (offsetY + guideRect.top * scale).round();
+        cropWidth = (guideRect.width * scale).round();
+        cropHeight = (guideRect.height * scale).round();
+      }
 
       // 确保裁剪区域在图片范围内
       final int safeX = cropX.clamp(0, imageWidth);
@@ -439,6 +517,34 @@ class _CameraPageState extends State<CameraPage> with SingleTickerProviderStateM
         width: safeWidth,
         height: safeHeight,
       );
+
+      // 如果照片是横向的但屏幕是竖向的，需要旋转图片
+      if (needsRotation) {
+        developer.log(
+          '旋转图片（逆时针90度）',
+          name: 'CameraPage',
+          error: {
+            'beforeRotation': '${croppedImage.width}x${croppedImage.height}',
+          },
+        );
+        croppedImage = img.copyRotate(croppedImage, angle: -90);
+        
+        developer.log(
+          '旋转后图片尺寸',
+          name: 'CameraPage',
+          error: {
+            'afterRotation': '${croppedImage.width}x${croppedImage.height}',
+          },
+        );
+      } else {
+        developer.log(
+          '照片无需旋转',
+          name: 'CameraPage',
+          error: {
+            'imageSize': '${croppedImage.width}x${croppedImage.height}',
+          },
+        );
+      }
 
       // 检查裁剪后图片的最短边，确保至少400px（API要求300px，设置为400px以保证质量且避免过度放大）
       const int minShortEdge = 400;
@@ -877,6 +983,91 @@ class _CameraPageState extends State<CameraPage> with SingleTickerProviderStateM
     }
   }
 
+  /// 计算引导文字的底部位置，确保不遮挡引导框
+  /// 统一方案：优先放在引导框下方，如果空间不足则放在引导框上方
+  double _calculateGuideTextBottomPosition(Size screenSize) {
+    // 获取引导框的位置
+    final Rect guideRect = _getGuideBoxRect(screenSize);
+    
+    // 底部控制按钮区域的高度（包括按钮、padding、间距）
+    const double bottomControlHeight = 110;
+    
+    // 文字高度（包括行高）
+    const double textHeight = 24;
+    
+    // 文字与引导框之间的最小间距（增加间距以避免遮挡）
+    const double minSpacing = 30;
+    
+    // 顶部区域高度（导航栏 + 说明文字）
+    // 导航栏约 60px，说明文字约 50px（包括 padding）
+    const double topAreaHeight = 110;
+    
+    // 引导框底部到屏幕底部的距离
+    final double distanceToBottom = screenSize.height - guideRect.bottom;
+    
+    // 引导框顶部到顶部区域底部的距离
+    final double distanceToTop = guideRect.top - topAreaHeight;
+    
+    // 计算在引导框下方是否有足够空间（需要：间距 + 文字高度 + 底部控制区域）
+    final double requiredSpaceBelow = minSpacing + textHeight + bottomControlHeight;
+    final double spaceBelow = distanceToBottom - requiredSpaceBelow;
+    
+    // 计算在引导框上方是否有足够空间（需要：间距 + 文字高度）
+    final double requiredSpaceAbove = minSpacing + textHeight;
+    final double spaceAbove = distanceToTop - requiredSpaceAbove;
+    
+    if (spaceBelow > 0) {
+      // 空间足够，放在引导框下方
+      // Positioned 的 bottom 是组件底部距离屏幕底部的距离
+      // 文字顶部 = guideRect.bottom + minSpacing
+      // 文字底部 = 文字顶部 + textHeight = guideRect.bottom + minSpacing + textHeight
+      // bottom = screenSize.height - 文字底部
+      final double position = screenSize.height - guideRect.bottom - minSpacing - textHeight;
+      developer.log(
+        '文字放在引导框下方',
+        name: 'CameraPage',
+        error: {
+          'screenHeight': screenSize.height,
+          'guideRectBottom': guideRect.bottom,
+          'position': position,
+          'spaceBelow': spaceBelow,
+          'textTopPosition': guideRect.bottom + minSpacing,
+        },
+      );
+      return position;
+    } else if (spaceAbove > 0) {
+      // 引导框下方空间不足，但上方有空间，放在引导框上方
+      // 文字底部 = guideRect.top - minSpacing
+      // bottom = screenSize.height - 文字底部
+      final double position = screenSize.height - (guideRect.top - minSpacing);
+      developer.log(
+        '文字放在引导框上方',
+        name: 'CameraPage',
+        error: {
+          'screenHeight': screenSize.height,
+          'guideRectTop': guideRect.top,
+          'position': position,
+          'spaceAbove': spaceAbove,
+          'textBottomPosition': guideRect.top - minSpacing,
+        },
+      );
+      return position;
+    } else {
+      // 上下都没有足够空间，放在底部控制按钮上方（最后的选择）
+      final double position = bottomControlHeight + 10;
+      developer.log(
+        '文字放在底部控制按钮上方（空间不足）',
+        name: 'CameraPage',
+        error: {
+          'position': position,
+          'spaceBelow': spaceBelow,
+          'spaceAbove': spaceAbove,
+        },
+      );
+      return position;
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -1001,7 +1192,7 @@ class _CameraPageState extends State<CameraPage> with SingleTickerProviderStateM
         if (!isLandscape)
           // 竖屏模式：引导文字在底部
           Positioned(
-            bottom: widget.type == CameraType.face ? 180 : 140,
+            bottom: _calculateGuideTextBottomPosition(screenSize),
             left: 0,
             right: 0,
             child: Center(

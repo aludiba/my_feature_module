@@ -470,34 +470,32 @@ class _SmzPageState extends State<SmzPage> {
           color: Colors.grey[100],
           borderRadius: BorderRadius.circular(8),
         ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Wrap(
-              spacing: 6,
-              runSpacing: 6,
-              children: imageData.recognitionResult!.results
-                  .map((result) => Container(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 8,
-                          vertical: 4,
+        child: SingleChildScrollView(
+          child: Wrap(
+            spacing: 6,
+            runSpacing: 6,
+            alignment: WrapAlignment.start,
+            crossAxisAlignment: WrapCrossAlignment.start,
+            children: imageData.recognitionResult!.results
+                .map((result) => Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 8,
+                        vertical: 4,
+                      ),
+                      decoration: BoxDecoration(
+                        color: Colors.grey[300],
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: Text(
+                        result,
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: Colors.grey[800],
                         ),
-                        decoration: BoxDecoration(
-                          color: Colors.grey[300],
-                          borderRadius: BorderRadius.circular(12),
-                        ),
-                        child: Text(
-                          result,
-                          style: TextStyle(
-                            fontSize: 12,
-                            color: Colors.grey[800],
-                          ),
-                        ),
-                      ))
-                  .toList(),
-            ),
-          ],
+                      ),
+                    ))
+                .toList(),
+          ),
         ),
       );
     }
