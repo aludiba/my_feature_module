@@ -874,51 +874,51 @@ class _CameraPageState extends State<CameraPage> with SingleTickerProviderStateM
         name: 'CameraPage',
       );
       await Future.delayed(const Duration(seconds: 1));
-      final random = DateTime.now().millisecond % 3;
+      // final random = DateTime.now().millisecond % 3;
       
-      if (random == 0) {
-        switch (widget.type) {
-          case CameraType.tongueSurface:
-            _recognitionResult = {
-              'success': false,
-              'errorMessage': '未检测到图片中舌部区域',
-            };
-            break;
-          case CameraType.sublingualVeins:
-            _recognitionResult = {
-              'success': false,
-              'errorMessage': '舌下络脉目标检测失败',
-            };
-            break;
-          case CameraType.face:
-            _recognitionResult = {
-              'success': false,
-              'errorMessage': '未检测到图片中面部区域',
-            };
-            break;
-        }
-      } else {
-        switch (widget.type) {
-          case CameraType.tongueSurface:
-            _recognitionResult = {
-              'success': true,
-              'results': ['舌色红', '舌苔黄'],
-            };
-            break;
-          case CameraType.sublingualVeins:
-            _recognitionResult = {
-              'success': true,
-              'results': ['未识别出异常'],
-            };
-            break;
-          case CameraType.face:
-            _recognitionResult = {
-              'success': true,
-              'results': ['面色黄', '唇紫'],
-            };
-            break;
-        }
-      }
+      // if (random == 0) {
+        // switch (widget.type) {
+        //   case CameraType.tongueSurface:
+        //     _recognitionResult = {
+        //       'success': false,
+        //       'errorMessage': '未检测到图片中舌部区域',
+        //     };
+        //     break;
+        //   case CameraType.sublingualVeins:
+        //     _recognitionResult = {
+        //       'success': false,
+        //       'errorMessage': '舌下络脉目标检测失败',
+        //     };
+        //     break;
+        //   case CameraType.face:
+        //     _recognitionResult = {
+        //       'success': false,
+        //       'errorMessage': '未检测到图片中面部区域',
+        //     };
+        //     break;
+        // }
+      // } else {
+        // switch (widget.type) {
+        //   case CameraType.tongueSurface:
+        //     _recognitionResult = {
+        //       'success': true,
+        //       'results': ['舌色红', '舌苔黄'],
+        //     };
+        //     break;
+        //   case CameraType.sublingualVeins:
+        //     _recognitionResult = {
+        //       'success': true,
+        //       'results': ['未识别出异常'],
+        //     };
+        //     break;
+        //   case CameraType.face:
+        //     _recognitionResult = {
+        //       'success': true,
+        //       'results': ['面色黄', '唇紫'],
+        //     };
+        //     break;
+        // }
+      // }
     }
     
     if (mounted) {
